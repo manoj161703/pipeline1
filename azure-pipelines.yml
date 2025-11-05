@@ -1,42 +1,46 @@
 trigger:
   branches:
     include:
-      - main   # run pipeline when you push to main
+      - main          # run pipeline when you push to main
 
 # Use your self-hosted agent on the VM
 pool:
-  name: 'Default'
+  name: 'Default'     # this must be the agent pool that has your VM agent
 
 variables:
-  acrName: 'acr12'
-  acrLoginServer: 'acr12.azurecr.io'
-  acrRepo: 'pipeline1-app'         # image name in ACR
+  # Change these if your names are different
+  acrLoginServer: 'acr12.azurecr.io'   # ACR login server
+  imageName: 'pipeline1-app'           # repo name in ACR
+  containerName: 'pipeline1_app'       # Docker container name on VM
+  hostPort: '8503'
+  containerPort: '8501'
 
 stages:
   - stage: BuildAndPush
     displayName: Build and push Docker image to ACR
     jobs:
       - job: Build
-        displayName: Build and push image
+        displayName: Build & push image
         steps:
           - checkout: self
 
-          - task: Docker@2
-            displayName: Build and push to ACR
-            inputs:
-              command: buildAndPush
-              containerRegistry: 'acr12-service-connection'   # ACR service connection name
-              repository: '$(acrRepo)'
-              dockerfile: '$(Build.SourcesDirectory)/Dockerfile'
-              tags: |
-                latest
-                $(Build.BuildId)
+          - script: |
+              echo "Logging in to ACR..."
+              sudo docker login $(acrLoginServer) -u $(acrUsername) -p $(acrPassword)
 
-  - stage: DeployToVM
+              echo "Building image..."
+              sudo docker build -t $(acrLoginServer)/$(imageName):$(Build.BuildId) -t $(acrLoginServer)/$(imageName):latest .
+
+              echo "Pushing image..."
+              sudo docker push $(acrLoginServer)/$(imageName):$(Build.BuildId)
+              sudo docker push $(acrLoginServer)/$(imageName):latest
+            displayName: 'Docker build & push'
+
+  - stage: Deploy
     displayName: Deploy image on VM
     dependsOn: BuildAndPush
     jobs:
-      - job: Deploy
+      - job: DeployJob
         displayName: Run container on VM
         steps:
           - script: |
@@ -44,16 +48,17 @@ stages:
               sudo docker login $(acrLoginServer) -u $(acrUsername) -p $(acrPassword)
 
               echo "Pulling latest image..."
-              sudo docker pull $(acrLoginServer)/$(acrRepo):latest
+              sudo docker pull $(acrLoginServer)/$(imageName):latest
 
-              echo "Stopping old container (if it exists)..."
-              sudo docker rm -f pipeline1_app || true
+              echo "Stopping old container if it exists..."
+              sudo docker rm -f $(containerName) || true
 
               echo "Starting new container..."
               sudo docker run -d \
-                -p 8503:8501 \
-                --name pipeline1_app \
-                $(acrLoginServer)/$(acrRepo):latest
+                -p $(hostPort):$(containerPort) \
+                --name $(containerName) \
+                $(acrLoginServer)/$(imageName):latest
 
-              echo "Deployment complete."
+              echo "Current containers:"
+              sudo docker ps
             displayName: 'Pull & restart Docker container'
