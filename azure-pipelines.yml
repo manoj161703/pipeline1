@@ -3,29 +3,29 @@ trigger:
     include:
       - main   # run pipeline when you push to main
 
+# Use your self-hosted agent on the VM
 pool:
-  vmImage: 'ubuntu-latest'
+  name: 'Default'
 
 variables:
   acrName: 'acr12'
-  acrRepo: 'pipeline1-app'
   acrLoginServer: 'acr12.azurecr.io'
-  vmHost: '172.191.37.116'
+  acrRepo: 'pipeline1-app'         # image name in ACR
 
 stages:
   - stage: BuildAndPush
     displayName: Build and push Docker image to ACR
     jobs:
       - job: Build
-        displayName: Build image
+        displayName: Build and push image
         steps:
           - checkout: self
 
           - task: Docker@2
-            displayName: Build and push image
+            displayName: Build and push to ACR
             inputs:
               command: buildAndPush
-              containerRegistry: 'acr12-service-connection'   # service connection to ACR
+              containerRegistry: 'acr12-service-connection'   # ACR service connection name
               repository: '$(acrRepo)'
               dockerfile: '$(Build.SourcesDirectory)/Dockerfile'
               tags: |
@@ -33,29 +33,27 @@ stages:
                 $(Build.BuildId)
 
   - stage: DeployToVM
-    displayName: Deploy image to Azure VM
+    displayName: Deploy image on VM
     dependsOn: BuildAndPush
     jobs:
       - job: Deploy
-        displayName: Deploy on VM
+        displayName: Run container on VM
         steps:
-          - task: SSH@0
-            displayName: Deploy to VM via SSH
-            inputs:
-              sshEndpoint: 'vm-ssh-connection'   # service connection to your VM
-              runOptions: 'commands'
-              commands: |
-                # Log in to ACR from inside the VM
-                sudo docker login $(acrLoginServer) -u $(acrUsername) -p $(acrPassword)
+          - script: |
+              echo "Logging in to ACR..."
+              sudo docker login $(acrLoginServer) -u $(acrUsername) -p $(acrPassword)
 
-                # Pull the latest image
-                sudo docker pull $(acrLoginServer)/$(acrRepo):latest
+              echo "Pulling latest image..."
+              sudo docker pull $(acrLoginServer)/$(acrRepo):latest
 
-                # Stop & remove any old container
-                sudo docker rm -f pipeline1_app || true
+              echo "Stopping old container (if it exists)..."
+              sudo docker rm -f pipeline1_app || true
 
-                # Run updated container on host port 8503 -> container 8501
-                sudo docker run -d \
-                  -p 8503:8501 \
-                  --name pipeline1_app \
-                  $(acrLoginServer)/$(acrRepo):latest
+              echo "Starting new container..."
+              sudo docker run -d \
+                -p 8503:8501 \
+                --name pipeline1_app \
+                $(acrLoginServer)/$(acrRepo):latest
+
+              echo "Deployment complete."
+            displayName: 'Pull & restart Docker container'
