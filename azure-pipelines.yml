@@ -1,32 +1,22 @@
 # ===============================================================
 #  Streamlit Web App - Azure DevOps CI/CD Pipeline
-#  Builds Docker image, pushes to ACR, and deploys on your VM
 # ===============================================================
 
 trigger:
   branches:
     include:
-      - main          # Trigger pipeline automatically on pushes to main branch
+      - main
 
-# ---------------------------------------------------------------
-#  Agent Pool: This tells Azure DevOps to use your self-hosted VM
-# ---------------------------------------------------------------
 pool:
-  name: 'Default'     # Must match the pool where your agent is registered
+  name: 'Default'
 
-# ---------------------------------------------------------------
-#  Global Variables - Used throughout the pipeline
-# ---------------------------------------------------------------
 variables:
-  acrLoginServer: 'acr12.azurecr.io'   # ACR login server (from Azure portal)
-  imageName: 'pipeline1-app'           # Image name inside ACR
-  containerName: 'pipeline1_app'       # Docker container name on VM
-  hostPort: '8503'                     # Port exposed on the VM
-  containerPort: '8501'                # Port inside the container (Streamlit default)
+  acrLoginServer: 'acr12.azurecr.io'
+  imageName: 'pipeline1-app'
+  containerName: 'pipeline1_app'
+  hostPort: '8503'
+  containerPort: '8501'
 
-# ---------------------------------------------------------------
-#  STAGE 1: Build and Push Docker Image to ACR
-# ---------------------------------------------------------------
 stages:
   - stage: BuildAndPush
     displayName: 'Build and Push Docker Image to ACR'
@@ -34,25 +24,31 @@ stages:
       - job: Build
         displayName: 'Build & Push Image'
         steps:
-          # Step 1: Get the source code from your repository
           - checkout: self
 
-          # Step 2: Log in to ACR, build image, and push to registry
           - script: |
-              echo "Logging in to Azure Container Registry..."
-              sudo docker login $(acrLoginServer) -u $(acrUsername) -p $(acrPassword)
+              set -euo pipefail
+              set -x
+
+              echo "Logging in to Azure Container Registry: $(acrLoginServer)"
+
+              echo "$ACR_PASSWORD" | docker login $(acrLoginServer) \
+                -u "$(ACR_USERNAME)" --password-stdin
+
+              echo "✅ Docker login succeeded"
 
               echo "Building Docker image..."
-              sudo docker build -t $(acrLoginServer)/$(imageName):$(Build.BuildId) -t $(acrLoginServer)/$(imageName):latest .
+              docker build -t $(acrLoginServer)/$(imageName):$(Build.BuildId) \
+                           -t $(acrLoginServer)/$(imageName):latest .
 
               echo "Pushing image to ACR..."
-              sudo docker push $(acrLoginServer)/$(imageName):$(Build.BuildId)
-              sudo docker push $(acrLoginServer)/$(imageName):latest
+              docker push $(acrLoginServer)/$(imageName):$(Build.BuildId)
+              docker push $(acrLoginServer)/$(imageName):latest
             displayName: 'Docker Build and Push'
+            env:
+              ACR_USERNAME: $(acrUsername)
+              ACR_PASSWORD: $(acrPassword)
 
-# ---------------------------------------------------------------
-#  STAGE 2: Deploy Docker Container on the Same VM
-# ---------------------------------------------------------------
   - stage: Deploy
     displayName: 'Deploy Latest Image on VM'
     dependsOn: BuildAndPush
@@ -61,22 +57,32 @@ stages:
         displayName: 'Deploy Container on VM'
         steps:
           - script: |
-              echo "Logging in to Azure Container Registry..."
-              sudo docker login $(acrLoginServer) -u $(acrUsername) -p $(acrPassword)
+              set -euo pipefail
+              set -x
+
+              echo "Logging in to Azure Container Registry: $(acrLoginServer)"
+
+              echo "$ACR_PASSWORD" | docker login $(acrLoginServer) \
+                -u "$(ACR_USERNAME)" --password-stdin
+
+              echo "✅ Docker login succeeded (Deploy stage)"
 
               echo "Pulling latest Docker image..."
-              sudo docker pull $(acrLoginServer)/$(imageName):latest
+              docker pull $(acrLoginServer)/$(imageName):latest
 
               echo "Stopping old container if it exists..."
-              sudo docker rm -f $(containerName) || true
+              docker rm -f $(containerName) || true
 
               echo "Starting new container..."
-              sudo docker run -d \
+              docker run -d \
                 -p $(hostPort):$(containerPort) \
                 --name $(containerName) \
                 $(acrLoginServer)/$(imageName):latest
 
               echo "Deployment completed successfully!"
               echo "Currently running containers:"
-              sudo docker ps
+              docker ps
             displayName: 'Pull and Restart Docker Container'
+            env:
+              ACR_USERNAME: $(acrUsername)
+              ACR_PASSWORD: $(acrPassword)
