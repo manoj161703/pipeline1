@@ -1,50 +1,28 @@
-# ===============================================================
-#  Streamlit Web App - Azure DevOps CI/CD Pipeline
-#  Builds Docker image, pushes to ACR, and deploys on your VM
-# ===============================================================
-
-trigger:
-  branches:
-    include:
-      - main          # Trigger pipeline automatically on pushes to main branch
-
-# ---------------------------------------------------------------
-#  Agent Pool: This tells Azure DevOps to use your self-hosted VM
-# ---------------------------------------------------------------
-pool:
-  name: 'Default'     # Must match the pool where your agent is registered
-
-# ---------------------------------------------------------------
-#  Global Variables - Used throughout the pipeline
-# ---------------------------------------------------------------
 variables:
-  acrLoginServer: 'acr12.azurecr.io'   # ACR login server (from Azure portal)
-  imageName: 'pipeline1-app'           # Image name inside ACR
-  containerName: 'pipeline1_app'       # Docker container name on VM
-  hostPort: '8503'                     # Port exposed on the VM
-  containerPort: '8501'                # Port inside the container (Streamlit default)
+  acrLoginServer: 'acr12.azurecr.io'
+  imageName: 'pipeline1-app'
+  containerName: 'pipeline1_app'
+  hostPort: '8503'
+  containerPort: '8501'
 
-# ---------------------------------------------------------------
-#  STAGE 1: Build and Push Docker Image to ACR
-# ---------------------------------------------------------------
 stages:
+  # STAGE 1: Build & Push on Microsoft-hosted agent
   - stage: BuildAndPush
     displayName: 'Build and Push Docker Image to ACR'
+    pool:
+      vmImage: 'ubuntu-latest'   # <-- hosted agent with more RAM
     jobs:
       - job: Build
         displayName: 'Build & Push Image'
         steps:
-          # Step 1: Get the source code from your repository
           - checkout: self
 
-          # Step 2: Log in to ACR, build image, and push to registry
           - script: |
               set -euo pipefail
               set -x
 
               echo "Logging in to Azure Container Registry: $(acrLoginServer)"
 
-              # Uses pipeline variables: acrUsername (plain), acrPassword (secret)
               echo "$(acrPassword)" | docker login $(acrLoginServer) \
                 -u "$(acrUsername)" --password-stdin
 
@@ -60,12 +38,12 @@ stages:
               docker push $(acrLoginServer)/$(imageName):latest
             displayName: 'Docker Build and Push'
 
-# ---------------------------------------------------------------
-#  STAGE 2: Deploy Docker Container on the Same VM
-# ---------------------------------------------------------------
+  # STAGE 2: Deploy on your self-hosted VM
   - stage: Deploy
     displayName: 'Deploy Latest Image on VM'
     dependsOn: BuildAndPush
+    pool:
+      name: 'Default'    # <-- your VM agent
     jobs:
       - job: DeployJob
         displayName: 'Deploy Container on VM'
@@ -85,7 +63,10 @@ stages:
               docker pull $(acrLoginServer)/$(imageName):latest
 
               echo "Stopping old container if it exists..."
-              docker rm -f $(containerName) || true
+              docker stop $(containerName) || true
+
+              echo "Removing old container if it exists..."
+              docker rm $(containerName) || true
 
               echo "Starting new container..."
               docker run -d \
