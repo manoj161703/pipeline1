@@ -1,22 +1,32 @@
 # ===============================================================
 #  Streamlit Web App - Azure DevOps CI/CD Pipeline
+#  Builds Docker image, pushes to ACR, and deploys on your VM
 # ===============================================================
 
 trigger:
   branches:
     include:
-      - main
+      - main          # Trigger pipeline automatically on pushes to main branch
 
+# ---------------------------------------------------------------
+#  Agent Pool: This tells Azure DevOps to use your self-hosted VM
+# ---------------------------------------------------------------
 pool:
-  name: 'Default'
+  name: 'Default'     # Must match the pool where your agent is registered
 
+# ---------------------------------------------------------------
+#  Global Variables - Used throughout the pipeline
+# ---------------------------------------------------------------
 variables:
-  acrLoginServer: 'acr12.azurecr.io'
-  imageName: 'pipeline1-app'
-  containerName: 'pipeline1_app'
-  hostPort: '8503'
-  containerPort: '8501'
+  acrLoginServer: 'acr12.azurecr.io'   # ACR login server (from Azure portal)
+  imageName: 'pipeline1-app'           # Image name inside ACR
+  containerName: 'pipeline1_app'       # Docker container name on VM
+  hostPort: '8503'                     # Port exposed on the VM
+  containerPort: '8501'                # Port inside the container (Streamlit default)
 
+# ---------------------------------------------------------------
+#  STAGE 1: Build and Push Docker Image to ACR
+# ---------------------------------------------------------------
 stages:
   - stage: BuildAndPush
     displayName: 'Build and Push Docker Image to ACR'
@@ -24,31 +34,35 @@ stages:
       - job: Build
         displayName: 'Build & Push Image'
         steps:
+          # Step 1: Get the source code from your repository
           - checkout: self
 
+          # Step 2: Log in to ACR, build image, and push to registry
           - script: |
               set -euo pipefail
               set -x
 
               echo "Logging in to Azure Container Registry: $(acrLoginServer)"
 
-              echo "$ACR_PASSWORD" | docker login $(acrLoginServer) \
-                -u "$(ACR_USERNAME)" --password-stdin
+              # Uses pipeline variables: acrUsername (plain), acrPassword (secret)
+              echo "$(acrPassword)" | docker login $(acrLoginServer) \
+                -u "$(acrUsername)" --password-stdin
 
               echo "✅ Docker login succeeded"
 
               echo "Building Docker image..."
-              docker build -t $(acrLoginServer)/$(imageName):$(Build.BuildId) \
-                           -t $(acrLoginServer)/$(imageName):latest .
+              docker build \
+                -t $(acrLoginServer)/$(imageName):$(Build.BuildId) \
+                -t $(acrLoginServer)/$(imageName):latest .
 
               echo "Pushing image to ACR..."
               docker push $(acrLoginServer)/$(imageName):$(Build.BuildId)
               docker push $(acrLoginServer)/$(imageName):latest
             displayName: 'Docker Build and Push'
-            env:
-              ACR_USERNAME: $(acrUsername)
-              ACR_PASSWORD: $(acrPassword)
 
+# ---------------------------------------------------------------
+#  STAGE 2: Deploy Docker Container on the Same VM
+# ---------------------------------------------------------------
   - stage: Deploy
     displayName: 'Deploy Latest Image on VM'
     dependsOn: BuildAndPush
@@ -62,8 +76,8 @@ stages:
 
               echo "Logging in to Azure Container Registry: $(acrLoginServer)"
 
-              echo "$ACR_PASSWORD" | docker login $(acrLoginServer) \
-                -u "$(ACR_USERNAME)" --password-stdin
+              echo "$(acrPassword)" | docker login $(acrLoginServer) \
+                -u "$(acrUsername)" --password-stdin
 
               echo "✅ Docker login succeeded (Deploy stage)"
 
@@ -83,6 +97,3 @@ stages:
               echo "Currently running containers:"
               docker ps
             displayName: 'Pull and Restart Docker Container'
-            env:
-              ACR_USERNAME: $(acrUsername)
-              ACR_PASSWORD: $(acrPassword)
