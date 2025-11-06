@@ -1,6 +1,6 @@
 # ===============================================================
 #  Streamlit Web App - Azure DevOps CI/CD Pipeline
-#  Builds Docker image, pushes to ACR, and deploys on your VM
+#  Builds Docker image, pushes to ACR, and deploys on VM
 # ===============================================================
 
 trigger:
@@ -8,20 +8,19 @@ trigger:
     include:
       - main
 
-# Use your self-hosted agent pool
 pool:
-  name: 'Default'
+  name: 'Default'   # Your self-hosted VM agent pool name
 
 variables:
-  acrLoginServer: 'acr12.azurecr.io'     # ACR login server
-  imageName: 'pipeline1-app'             # Image name in ACR
-  containerName: 'pipeline1_app_v2'      # NEW container name
-  hostPort: '8504'                       # NEW host port (8504, not 8503)
-  containerPort: '8501'                  # Port inside container (Streamlit)
+  acrLoginServer: 'acr12.azurecr.io'    # Replace with your ACR login server
+  imageName: 'pipeline1-app'            # Image name inside ACR
+  containerName: 'pipeline1_app'        # Container name on VM
+  hostPort: '8503'                      # Port exposed on VM
+  containerPort: '8501'                 # Streamlit default port (inside container)
 
 stages:
   # -------------------------------------------------------------
-  #  STAGE 1: Build & Push on your VM
+  #  STAGE 1: Build & Push Docker Image
   # -------------------------------------------------------------
   - stage: BuildAndPush
     displayName: 'Build and Push Docker Image to ACR'
@@ -33,19 +32,13 @@ stages:
 
           - script: |
               set -euo pipefail
-              set -x
-
-              echo "Logging in to Azure Container Registry: $(acrLoginServer)"
-
-              echo "$(acrPassword)" | docker login $(acrLoginServer) \
-                -u "$(acrUsername)" --password-stdin
-
-              echo "✅ Docker login succeeded"
+              echo "Logging in to Azure Container Registry..."
+              echo "$(acrPassword)" | docker login $(acrLoginServer) -u "$(acrUsername)" --password-stdin
+              echo "✅ Login successful"
 
               echo "Building Docker image..."
-              docker build \
-                -t $(acrLoginServer)/$(imageName):$(Build.BuildId) \
-                -t $(acrLoginServer)/$(imageName):latest .
+              docker build -t $(acrLoginServer)/$(imageName):$(Build.BuildId) \
+                           -t $(acrLoginServer)/$(imageName):latest .
 
               echo "Pushing image to ACR..."
               docker push $(acrLoginServer)/$(imageName):$(Build.BuildId)
@@ -53,42 +46,33 @@ stages:
             displayName: 'Docker Build and Push'
 
   # -------------------------------------------------------------
-  #  STAGE 2: Deploy on the same VM
+  #  STAGE 2: Deploy Docker Container on VM
   # -------------------------------------------------------------
   - stage: Deploy
-    displayName: 'Deploy Latest Image on VM'
+    displayName: 'Deploy Latest Docker Image on VM'
     dependsOn: BuildAndPush
     jobs:
       - job: DeployJob
-        displayName: 'Deploy Container on VM'
+        displayName: 'Deploy to VM'
         steps:
           - script: |
               set -euo pipefail
-              set -x
+              echo "Logging in to Azure Container Registry..."
+              echo "$(acrPassword)" | docker login $(acrLoginServer) -u "$(acrUsername)" --password-stdin
+              echo "✅ Login successful (Deploy stage)"
 
-              echo "Logging in to Azure Container Registry: $(acrLoginServer)"
-
-              echo "$(acrPassword)" | docker login $(acrLoginServer) \
-                -u "$(acrUsername)" --password-stdin
-
-              echo "✅ Docker login succeeded (Deploy stage)"
-
-              echo "Pulling latest Docker image..."
+              echo "Pulling latest image..."
               docker pull $(acrLoginServer)/$(imageName):latest
 
-              echo "Stopping old v2 container if it exists..."
-              docker stop $(containerName) || true
+              echo "Removing old container if exists..."
+              docker rm -f $(containerName) || true
 
-              echo "Removing old v2 container if it exists..."
-              docker rm $(containerName) || true
+              echo "Starting new container..."
+              docker run -d -p $(hostPort):$(containerPort) \
+                         --name $(containerName) \
+                         $(acrLoginServer)/$(imageName):latest
 
-              echo "Starting NEW container on port $(hostPort)..."
-              docker run -d \
-                -p $(hostPort):$(containerPort) \
-                --name $(containerName) \
-                $(acrLoginServer)/$(imageName):latest
-
-              echo "Deployment completed successfully!"
+              echo "✅ Deployment completed successfully!"
               echo "Currently running containers:"
               docker ps
-            displayName: 'Pull and Restart Docker Container'
+            displayName: 'Deploy Container on VM'
