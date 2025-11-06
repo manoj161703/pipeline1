@@ -1,3 +1,16 @@
+# ===============================================================
+#  Streamlit Web App - Azure DevOps CI/CD Pipeline
+# ===============================================================
+
+trigger:
+  branches:
+    include:
+      - main
+
+# Use your self-hosted agent pool
+pool:
+  name: 'Default'
+
 variables:
   acrLoginServer: 'acr12.azurecr.io'
   imageName: 'pipeline1-app'
@@ -6,11 +19,11 @@ variables:
   containerPort: '8501'
 
 stages:
-  # STAGE 1: Build & Push on Microsoft-hosted agent
+  # -------------------------------------------------------------
+  #  STAGE 1: Build & Push on YOUR VM (self-hosted)
+  # -------------------------------------------------------------
   - stage: BuildAndPush
     displayName: 'Build and Push Docker Image to ACR'
-    pool:
-      vmImage: 'ubuntu-latest'   # <-- hosted agent with more RAM
     jobs:
       - job: Build
         displayName: 'Build & Push Image'
@@ -38,12 +51,12 @@ stages:
               docker push $(acrLoginServer)/$(imageName):latest
             displayName: 'Docker Build and Push'
 
-  # STAGE 2: Deploy on your self-hosted VM
+  # -------------------------------------------------------------
+  #  STAGE 2: Deploy on the same VM
+  # -------------------------------------------------------------
   - stage: Deploy
     displayName: 'Deploy Latest Image on VM'
     dependsOn: BuildAndPush
-    pool:
-      name: 'Default'    # <-- your VM agent
     jobs:
       - job: DeployJob
         displayName: 'Deploy Container on VM'
