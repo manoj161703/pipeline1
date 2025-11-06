@@ -1,5 +1,6 @@
 # ===============================================================
 #  Streamlit Web App - Azure DevOps CI/CD Pipeline
+#  Builds Docker image, pushes to ACR, and deploys on your VM
 # ===============================================================
 
 trigger:
@@ -12,15 +13,15 @@ pool:
   name: 'Default'
 
 variables:
-  acrLoginServer: 'acr12.azurecr.io'
-  imageName: 'pipeline1-app'
-  containerName: 'pipeline1_app'
-  hostPort: '8503'
-  containerPort: '8501'
+  acrLoginServer: 'acr12.azurecr.io'     # ACR login server
+  imageName: 'pipeline1-app'             # Image name in ACR
+  containerName: 'pipeline1_app_v2'      # NEW container name
+  hostPort: '8504'                       # NEW host port (8504, not 8503)
+  containerPort: '8501'                  # Port inside container (Streamlit)
 
 stages:
   # -------------------------------------------------------------
-  #  STAGE 1: Build & Push on YOUR VM (self-hosted)
+  #  STAGE 1: Build & Push on your VM
   # -------------------------------------------------------------
   - stage: BuildAndPush
     displayName: 'Build and Push Docker Image to ACR'
@@ -75,13 +76,13 @@ stages:
               echo "Pulling latest Docker image..."
               docker pull $(acrLoginServer)/$(imageName):latest
 
-              echo "Stopping old container if it exists..."
+              echo "Stopping old v2 container if it exists..."
               docker stop $(containerName) || true
 
-              echo "Removing old container if it exists..."
+              echo "Removing old v2 container if it exists..."
               docker rm $(containerName) || true
 
-              echo "Starting new container..."
+              echo "Starting NEW container on port $(hostPort)..."
               docker run -d \
                 -p $(hostPort):$(containerPort) \
                 --name $(containerName) \
